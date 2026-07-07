@@ -1,0 +1,3 @@
+<clickhouse>
+    <replica_group_name>rw1</replica_group_name>
+</clickhouse>

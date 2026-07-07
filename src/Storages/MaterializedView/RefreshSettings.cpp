@@ -12,6 +12,7 @@ namespace DB
     DECLARE(Bool, all_replicas, /* do not change or existing tables will break */ false, "If the materialized view is in a Replicated database, and APPEND is enabled, this flag controls whether all replicas or one replica will refresh.", 0) \
     DECLARE(Bool, prefer_dependency_replica, false, "Deprecated and ignored.", 0) \
     DECLARE(UInt64, prefer_dependency_replica_delay_ms, 2000, "Deprecated and ignored.", 0) \
+    DECLARE(String, replica_group, "", "If not empty, and the materialized view uses coordinated refreshing (Replicated or Shared database), only replicas whose server-level `replica_group_name` matches this value start scheduled refreshes (including retries) of this view. Other replicas still observe refresh progress and serve reads. Manual SYSTEM REFRESH VIEW is not restricted and runs on the replica that receives it. If no live replica belongs to the group, scheduled refreshes don't happen. Incompatible with all_replicas.", 0) \
 
 DECLARE_SETTINGS_TRAITS(RefreshSettingsTraits, LIST_OF_REFRESH_SETTINGS, REFRESH_SETTINGS_SUPPORTED_TYPES)
 IMPLEMENT_SETTINGS_TRAITS(RefreshSettingsTraits, LIST_OF_REFRESH_SETTINGS, RefreshSettings, RefreshSetting)

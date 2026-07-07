@@ -294,6 +294,12 @@ In non-`APPEND` mode, only coordinated refreshing is supported. For uncoordinate
 
 The coordination is done through Keeper. The znode path is determined by [default_replica_path](../../../operations/server-configuration-parameters/settings.md#default_replica_path) server setting.
 
+By default, any replica may perform the refresh (whichever replica's scheduler gets to it first). If replicas are assigned to [replica groups](../../../engines/database-engines/replicated.md) (`replica_group_name` server setting), the `replica_group` refresh setting restricts scheduled refreshes of the view to replicas of one group:
+```sql
+CREATE MATERIALIZED VIEW mv REFRESH EVERY 1 HOUR SETTINGS replica_group = 'etl' TO target AS ...
+```
+Replicas of other groups then never start scheduled refreshes (including retries) of this view; they still observe refresh progress and serve reads. This is useful to isolate refresh workloads to dedicated compute (e.g. a specific service in a ClickHouse Cloud warehouse). Note that if no live replica belongs to the specified group, scheduled refreshes don't happen at all. Manual `SYSTEM REFRESH VIEW` is not restricted: it runs on the replica that receives the query.
+
 ### Refresh Dependencies {#refresh-dependencies}
 
 `DEPENDS ON` synchronizes refreshes of different tables:
@@ -390,6 +396,7 @@ Available refresh settings:
 * `refresh_retry_initial_backoff_ms` - Delay before the first retry, if `refresh_retries` is not zero. Each subsequent retry doubles the delay, up to `refresh_retry_max_backoff_ms`. Default: 100 ms.
 * `refresh_retry_max_backoff_ms` - Limit on the exponential growth of delay between refresh attempts. Default: 60000 ms (1 minute).
 * `all_replicas` - In a [Replicated database](../../../engines/database-engines/replicated.md) with `APPEND`, controls whether all replicas refresh independently or only one replica refreshes at each scheduled time. Cannot be changed after the view is created. Default: `false`.
+* `replica_group` - If not empty, and the view uses coordinated refreshing (Replicated or Shared database), only replicas whose `replica_group_name` server setting matches this value start scheduled refreshes (including retries) of this view. Manual `SYSTEM REFRESH VIEW` is not restricted. Incompatible with `all_replicas`. Default: empty (any replica may refresh).
 
 ### Changing Refresh Parameters {#changing-refresh-parameters}
 

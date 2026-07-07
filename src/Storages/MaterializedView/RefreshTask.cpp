@@ -29,6 +29,7 @@
 #include <Common/ZooKeeper/ZooKeeper.h>
 #include <Common/ZooKeeper/ZooKeeperCommon.h>
 #include <Common/thread_local_rng.h>
+#include <Poco/Util/AbstractConfiguration.h>
 
 
 namespace CurrentMetrics
@@ -68,6 +69,7 @@ namespace RefreshSetting
     extern const RefreshSettingsInt64 refresh_retries;
     extern const RefreshSettingsUInt64 refresh_retry_initial_backoff_ms;
     extern const RefreshSettingsUInt64 refresh_retry_max_backoff_ms;
+    extern const RefreshSettingsString replica_group;
 }
 
 namespace ErrorCodes
@@ -144,6 +146,10 @@ RefreshTask::RefreshTask(
         info.table_id = view->getStorageID();
         coordination.path = macros->expand(server_settings[ServerSetting::default_replica_path], info);
         coordination.replica_name = context->getMacros()->expand(server_settings[ServerSetting::default_replica_name], info);
+        /// Same config key that DatabaseReplicated uses to assign this server to a replica group
+        /// (in ClickHouse Cloud, services/compute groups of a warehouse). Used by the
+        /// `replica_group` refresh setting to decide which replicas run scheduled refreshes.
+        coordination.replica_group_name = context->getConfigRef().getString("replica_group_name", "");
 
         auto zookeeper = context->getZooKeeper();
         String replica_path = coordination.path + "/replicas/" + coordination.replica_name;
@@ -405,6 +411,8 @@ void RefreshTask::checkAlterIsPossible(const DB::ASTRefreshStrategy & new_strate
         s.applyChanges(new_strategy.settings->changes);
     if (s[RefreshSetting::all_replicas] != refresh_settings[RefreshSetting::all_replicas])
         throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Altering setting 'all_replicas' is not supported.");
+    if (s[RefreshSetting::all_replicas] && !s[RefreshSetting::replica_group].value.empty())
+        throw Exception(ErrorCodes::INCORRECT_QUERY, "Setting 'replica_group' cannot be used together with 'all_replicas'.");
     if (new_strategy.append != refresh_append)
         throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Adding or removing APPEND is not supported.");
 }
@@ -902,6 +910,16 @@ void RefreshTask::doScheduling(bool is_shutdown)
             chassert(start_znode.attempt_number > 0);
             start_znode.attempt_number -= 1;
         }
+        else if (!scheduledRefreshAllowedOnThisReplica(lock))
+        {
+            /// Scheduled refreshes of this view are pinned to a different replica group
+            /// (`replica_group` refresh setting). Don't start refreshes here; a replica of the
+            /// allowed group will. No need to set a timer: we'll be woken up by a keeper watch
+            /// when that replica updates the coordination znodes (and shown as
+            /// RunningOnAnotherReplica while its refresh runs).
+            setState(RefreshState::Scheduled, lock);
+            return;
+        }
         else if (start_time < when || waiting_for_dependencies)
         {
             /// If we're not refreshing for two reasons at once (dependencies not satisfied,
@@ -1293,6 +1311,16 @@ static std::chrono::milliseconds backoff(Int64 retry_idx, const RefreshSettings 
     else
         delay_ms = refresh_settings[RefreshSetting::refresh_retry_max_backoff_ms];
     return std::chrono::milliseconds(delay_ms);
+}
+
+bool RefreshTask::scheduledRefreshAllowedOnThisReplica(const std::unique_lock<std::mutex> & lock) const
+{
+    chassert(lock.owns_lock());
+    /// Without coordination there's no other replica to leave the refresh to; ignore the setting.
+    if (!coordination.coordinated)
+        return true;
+    const String & group = refresh_settings[RefreshSetting::replica_group].value;
+    return group.empty() || group == coordination.replica_group_name;
 }
 
 std::tuple<std::chrono::system_clock::time_point, bool /*waiting_for_dependencies*/, RefreshTask::CoordinationZnode>

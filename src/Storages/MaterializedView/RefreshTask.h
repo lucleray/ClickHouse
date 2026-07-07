@@ -263,6 +263,10 @@ private:
         bool read_only = false;
         String path;
         String replica_name;
+        /// This server's replica group, from the `replica_group_name` server config (same key that
+        /// DatabaseReplicated uses). Compared against the `replica_group` refresh setting to decide
+        /// whether this replica is allowed to start scheduled refreshes. Empty if not configured.
+        String replica_group_name;
 
         DependencyRefreshInfo notified_dependents;
     };
@@ -420,6 +424,12 @@ private:
     ///    e.g. on SYSTEM REFRESH VIEW.
     std::tuple<std::chrono::system_clock::time_point, bool /*waiting_for_dependencies*/, CoordinationZnode>
     determineNextRefreshTime(std::chrono::system_clock::time_point now, const AllDependenciesInfo & dependencies, const std::unique_lock<std::mutex> & lock);
+
+    /// Whether this replica is allowed to start *scheduled* refreshes of this view.
+    /// False iff coordination is enabled and the `replica_group` refresh setting is set to a
+    /// group different from this server's `replica_group_name` config. Manual refreshes
+    /// (SYSTEM REFRESH VIEW) are not affected: they run on the replica that received the query.
+    bool scheduledRefreshAllowedOnThisReplica(const std::unique_lock<std::mutex> & lock) const;
 
     void readZnodesIfNeeded(std::shared_ptr<zkutil::ZooKeeper> zookeeper, std::unique_lock<std::mutex> & lock);
     /// Update the root znode and create/remove-if-exists the 'running' znode,

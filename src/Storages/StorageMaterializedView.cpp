@@ -66,6 +66,7 @@ namespace ServerSetting
 namespace RefreshSetting
 {
     extern const RefreshSettingsBool all_replicas;
+    extern const RefreshSettingsString replica_group;
 }
 
 namespace ErrorCodes
@@ -213,6 +214,16 @@ StorageMaterializedView::StorageMaterializedView(
                 /// In non-APPEND mode, uncoordinated refresh would just break. Require coordination.
                 refresh_coordinated = true;
             }
+        }
+
+        if (mode < LoadingStrictnessLevel::SECONDARY_CREATE && query.refresh_strategy->settings)
+        {
+            /// `replica_group` restricts which replicas run scheduled refreshes, while `all_replicas`
+            /// makes all replicas refresh independently. The combination is contradictory.
+            RefreshSettings s;
+            s.applyChanges(query.refresh_strategy->settings->changes);
+            if (s[RefreshSetting::all_replicas] && !s[RefreshSetting::replica_group].value.empty())
+                throw Exception(ErrorCodes::INCORRECT_QUERY, "Setting 'replica_group' cannot be used together with 'all_replicas'.");
         }
 
         if (mode < LoadingStrictnessLevel::SECONDARY_CREATE && !fixed_uuid)
